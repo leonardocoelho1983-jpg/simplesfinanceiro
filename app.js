@@ -1,5 +1,5 @@
-/* ==================== 1️⃣  DADOS INICIAIS ==================== */
-const CATEGORIES = {
+// ==================== 1️⃣  CATEGORIAS E DADOS ====================
+let CATEGORIES = {
     RECEITAS: [
         { id: 'rendaFamiliar', name: 'Renda Familiar' },
         { id: 'gabiAlimentacao', name: 'Gabi Alimentação' },
@@ -47,36 +47,41 @@ const MONTHS = [
 ];
 
 let appData = {
-    previsaoAnual: {},   // valores da previsão
-    meses: {}            // dados mensais (receitas, despesas, cartões, investimento)
+    previsaoAnual: {},
+    meses: {},
+    categories: JSON.parse(JSON.stringify(CATEGORIES)) // Cópia para permitir edição
 };
 
-let currentActiveMonthIndex = null; // índice do mês aberto (0‑11)
+let currentActiveMonthIndex = null;
 
 /* ==================== 2️⃣  LOCAL STORAGE ==================== */
 function loadData() {
     const stored = localStorage.getItem('controleFinanceiroData');
     if (stored) {
         appData = JSON.parse(stored);
+        // Atualizar CATEGORIES com as categorias salvas
+        CATEGORIES = appData.categories || CATEGORIES;
     } else {
         initializeData();
     }
 }
+
 function saveData() {
+    appData.categories = CATEGORIES;
     localStorage.setItem('controleFinanceiroData', JSON.stringify(appData));
 }
+
 function initializeData() {
-    // Previsão anual com zeros
+    appData.categories = JSON.parse(JSON.stringify(CATEGORIES));
     CATEGORIES.RECEITAS.forEach(c => appData.previsaoAnual[c.id] = 0);
     CATEGORIES.DESPESAS.forEach(c => appData.previsaoAnual[c.id] = 0);
     CATEGORIES.CARTOES.forEach(c => appData.previsaoAnual[c.id] = []);
     appData.previsaoAnual.investimento = 0;
 
-    // Estrutura dos meses (todos ainda não confirmados)
     MONTHS.forEach((_, i) => {
         const key = `mes_${i}`;
         appData.meses[key] = {
-            isInitialized: false, // ainda não tem dados reais confirmados
+            isInitialized: false,
             receitas: {},
             despesas: {},
             cartoes: {},
@@ -96,133 +101,274 @@ function propagatePrevisaoToMonths() {
         const key = `mes_${i}`;
         const month = appData.meses[key];
 
-        // Receitas
         CATEGORIES.RECEITAS.forEach(cat => {
-            // Se a categoria não existe no mês ou não está confirmada, usa a previsão
-            if (!month.receitas[cat.id] || !month.receitas[cat.id].confirmado) {
-                month.receitas[cat.id] = { valor: appData.previsaoAnual[cat.id] || 0, confirmado: false };
+            if (!month.receitas[cat.id]) {
+                month.receitas[cat.id] = { valor: 0, confirmado: false };
             }
+            month.receitas[cat.id].valor = appData.previsaoAnual[cat.id] || 0;
         });
-        // Despesas
-        CATEGORIES.DESPESAS.forEach(cat => {
-            // Se a categoria não existe no mês ou não está confirmada, usa a previsão
-            if (!month.despesas[cat.id] || !month.despesas[cat.id].confirmado) {
-                month.despesas[cat.id] = { valor: appData.previsaoAnual[cat.id] || 0, confirmado: false };
-            }
-        });
-        // Cartões
-        CATEGORIES.CARTOES.forEach(card => {
-            const previsaoItens = appData.previsaoAnual[card.id] || [];
-            // Recria a lista de cartões do mês com base na previsão, mas mantém o 'confirmado' se já existia
-            month.cartoes[card.id] = previsaoItens.map(previsaoItem => {
-                const existingItem = (month.cartoes[card.id] || []).find(
-                    item => item.descricao === previsaoItem.descricao && item.parcelas === previsaoItem.parcelas
-                );
-                return {
-                    ...previsaoItem,
-                    confirmado: existingItem ? existingItem.confirmado : false
-                };
-            });
-        });
-        // Investimento
-        if (!month.investimento || !month.investimento.confirmado) {
-            month.investimento = { valor: appData.previsaoAnual.investimento || 0, confirmado: false };
-        }
 
-        calculateMonthTotals(`mes_${i}`);
+        CATEGORIES.DESPESAS.forEach(cat => {
+            if (!month.despesas[cat.id]) {
+                month.despesas[cat.id] = { valor: 0, confirmado: false };
+            }
+            month.despesas[cat.id].valor = appData.previsaoAnual[cat.id] || 0;
+        });
+
+        CATEGORIES.CARTOES.forEach(card => {
+            month.cartoes[card.id] = (appData.previsaoAnual[card.id] || []).map(it => ({
+                ...it,
+                confirmado: false
+            }));
+        });
+
+        month.investimento = { valor: appData.previsaoAnual.investimento || 0, confirmado: false };
     });
     saveData();
 }
 
-/* ==================== 4️⃣  RENDERIZAÇÃO ==================== */
-function renderPrevisaoAnual() {
+/* ==================== 4️⃣  EDITAR CATEGORIAS ==================== */
+function renderEditCategoriesModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal fade';
+    modal.id = 'editCategoriesModal';
+    modal.setAttribute('tabindex', '-1');
+    
+    let html = `
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Editar Categorias</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+    `;
+
+    // Receitas
+    html += `<h6 class="text-success mb-3">Receitas</h6>`;
+    CATEGORIES.RECEITAS.forEach((cat, idx) => {
+        html += `
+        <div class="input-group mb-2">
+            <input type="text" class="form-control edit-category-input" 
+                   data-type="RECEITAS" data-index="${idx}" value="${cat.name}">
+            <button class="btn btn-danger btn-sm remove-category-btn" 
+                    data-type="RECEITAS" data-index="${idx}">Remover</button>
+        </div>`;
+    });
+    html += `<button class="btn btn-sm btn-success mb-3 add-category-btn" data-type="RECEITAS">+ Adicionar Receita</button>`;
+
+    // Despesas
+    html += `<h6 class="text-danger mb-3">Despesas</h6>`;
+    CATEGORIES.DESPESAS.forEach((cat, idx) => {
+        html += `
+        <div class="input-group mb-2">
+            <input type="text" class="form-control edit-category-input" 
+                   data-type="DESPESAS" data-index="${idx}" value="${cat.name}">
+            <button class="btn btn-danger btn-sm remove-category-btn" 
+                    data-type="DESPESAS" data-index="${idx}">Remover</button>
+        </div>`;
+    });
+    html += `<button class="btn btn-sm btn-danger mb-3 add-category-btn" data-type="DESPESAS">+ Adicionar Despesa</button>`;
+
+    // Cartões
+    html += `<h6 class="text-primary mb-3">Cartões de Crédito</h6>`;
+    CATEGORIES.CARTOES.forEach((cat, idx) => {
+        html += `
+        <div class="input-group mb-2">
+            <input type="text" class="form-control edit-category-input" 
+                   data-type="CARTOES" data-index="${idx}" value="${cat.name}">
+            <button class="btn btn-danger btn-sm remove-category-btn" 
+                    data-type="CARTOES" data-index="${idx}">Remover</button>
+        </div>`;
+    });
+    html += `<button class="btn btn-sm btn-primary add-category-btn" data-type="CARTOES">+ Adicionar Cartão</button>`;
+
+    html += `
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary save-categories-btn">Salvar Mudanças</button>
+            </div>
+        </div>
+    </div>`;
+
+    modal.innerHTML = html;
+    document.body.appendChild(modal);
+
+    // Event listeners
+    modal.querySelectorAll('.edit-category-input').forEach(inp => {
+        inp.addEventListener('change', e => {
+            const type = e.target.dataset.type;
+            const idx = parseInt(e.target.dataset.index);
+            CATEGORIES[type][idx].name = e.target.value;
+        });
+    });
+
+    modal.querySelectorAll('.remove-category-btn').forEach(btn => {
+        btn.addEventListener('click', e => {
+            const type = e.target.dataset.type;
+            const idx = parseInt(e.target.dataset.index);
+            CATEGORIES[type].splice(idx, 1);
+            // Reabrir modal
+            const bsModal = bootstrap.Modal.getInstance(modal);
+            bsModal.hide();
+            setTimeout(() => {
+                document.getElementById('editCategoriesModal').remove();
+                renderEditCategoriesModal();
+                new bootstrap.Modal(document.getElementById('editCategoriesModal')).show();
+            }, 300);
+        });
+    });
+
+    modal.querySelectorAll('.add-category-btn').forEach(btn => {
+        btn.addEventListener('click', e => {
+            const type = e.target.dataset.type;
+            const newId = `custom_${Date.now()}`;
+            const newName = `Nova ${type.slice(0, -1)}`;
+            CATEGORIES[type].push({ id: newId, name: newName });
+            // Reabrir modal
+            const bsModal = bootstrap.Modal.getInstance(modal);
+            bsModal.hide();
+            setTimeout(() => {
+                document.getElementById('editCategoriesModal').remove();
+                renderEditCategoriesModal();
+                new bootstrap.Modal(document.getElementById('editCategoriesModal')).show();
+            }, 300);
+        });
+    });
+
+    modal.querySelector('.save-categories-btn').addEventListener('click', () => {
+        saveData();
+        propagatePrevisaoToMonths();
+        const bsModal = bootstrap.Modal.getInstance(modal);
+        bsModal.hide();
+        renderPrevisao();
+        alert('✅ Categorias atualizadas com sucesso!');
+    });
+
+    return modal;
+}
+
+/* ==================== 5️⃣  RENDERIZAR PREVISÃO ==================== */
+function renderPrevisao() {
     const container = document.getElementById('previsao-content');
     container.innerHTML = '';
 
-    // ---- RECEITAS ----
-    let html = `<div class="col-md-6"><div class="category-section card">
+    let html = `<div class="row">
+                <div class="col-md-6"><div class="category-section card">
                     <div class="card-body">
                         <h3 class="card-title text-success">Receitas Anuais</h3>`;
+
     CATEGORIES.RECEITAS.forEach(cat => {
-        const v = appData.previsaoAnual[cat.id] || 0;
+        const val = appData.previsaoAnual[cat.id] || 0;
         html += `
             <div class="item-row d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-dashed">
                 <label for="previsao-${cat.id}" class="form-label mb-0">${cat.name}</label>
                 <input type="number" id="previsao-${cat.id}"
-                       data-category-type="receita"
                        data-id="${cat.id}"
-                       value="${v.toFixed(2)}" step="0.01" class="form-control w-auto text-end">
+                       value="${val.toFixed(2)}" step="0.01" class="form-control w-auto text-end">
             </div>`;
     });
-    html += `</div></div></div>`;
-    container.innerHTML += html;
 
-    // ---- DESPESAS ----
-    html = `<div class="col-md-6"><div class="category-section card">
-                <div class="card-body">
-                    <h3 class="card-title text-success">Despesas Anuais</h3>`;
+    html += `</div></div></div>
+             <div class="col-md-6"><div class="category-section card">
+                    <div class="card-body">
+                        <h3 class="card-title text-danger">Despesas Anuais</h3>`;
+
     CATEGORIES.DESPESAS.forEach(cat => {
-        const v = appData.previsaoAnual[cat.id] || 0;
+        const val = appData.previsaoAnual[cat.id] || 0;
         html += `
             <div class="item-row d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-dashed">
                 <label for="previsao-${cat.id}" class="form-label mb-0">${cat.name}</label>
                 <input type="number" id="previsao-${cat.id}"
-                       data-category-type="despesa"
                        data-id="${cat.id}"
-                       value="${v.toFixed(2)}" step="0.01" class="form-control w-auto text-end">
+                       value="${val.toFixed(2)}" step="0.01" class="form-control w-auto text-end">
             </div>`;
     });
-    html += `</div></div></div>`;
-    container.innerHTML += html;
 
-    // ---- CARTÕES ----
-    html = `<div class="col-12"><div class="category-section card card-details-section">
+    html += `</div></div></div></div>`;
+
+    // Cartões
+    html += `<div class="row mt-3"><div class="col-12"><div class="category-section card">
                 <div class="card-body">
-                    <h3 class="card-title text-success">Cartões de Crédito (Previsão Anual)</h3>`;
+                    <h3 class="card-title text-primary">Cartões de Crédito (Previsão Anual)</h3>`;
+
     CATEGORIES.CARTOES.forEach(card => {
-        html += `<h4 class="text-primary mt-3">${card.name}</h4>`;
-        html += `<div id="previsao-card-${card.id}-items" class="card-items-container mb-3">`;
-        const itens = appData.previsaoAnual[card.id] || [];
-        itens.forEach((it, idx) => {
-            html += renderCardItem(it, `previsao-${card.id}-${idx}`, true);
-        });
-        html += `</div>`;
-        html += `<button type="button" class="add-card-item-btn btn btn-primary btn-sm"
-                       data-card-id="${card.id}" data-target="previsao">Adicionar Item</button>`;
-    });
-    html += `</div></div></div>`;
-    container.innerHTML += html;
-
-    // ---- INVESTIMENTO ----
-    const inv = appData.previsaoAnual.investimento || 0;
-    container.innerHTML += `
-        <div class="col-md-6"><div class="category-section card">
-            <div class="card-body">
-                <h3 class="card-title text-success">Investimento Anual</h3>
-                <div class="item-row d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-dashed">
-                    <label for="previsao-investimento" class="form-label mb-0">Valor Previsto</label>
-                    <input type="number" id="previsao-investimento"
-                           data-category-type="investimento"
-                           value="${inv.toFixed(2)}" step="0.01" class="form-control w-auto text-end">
+        const items = appData.previsaoAnual[card.id] || [];
+        html += `<h5 class="mt-3">${card.name}</h5>`;
+        items.forEach((item, idx) => {
+            html += `
+            <div class="card-item mb-2 p-2 border rounded" style="background: #f9f9f9;">
+                <div class="row g-2">
+                    <div class="col-md-4">
+                        <input type="text" class="form-control form-control-sm" 
+                               id="previsao-${card.id}-${idx}-descricao"
+                               placeholder="Descrição" value="${item.descricao || ''}" step="0.01">
+                    </div>
+                    <div class="col-md-2">
+                        <input type="text" class="form-control form-control-sm" 
+                               id="previsao-${card.id}-${idx}-parcelas"
+                               placeholder="Parcelas" value="${item.parcelas || ''}">
+                    </div>
+                    <div class="col-md-3">
+                        <input type="number" class="form-control form-control-sm" 
+                               id="previsao-${card.id}-${idx}-valor"
+                               placeholder="Valor Mensal" value="${(item.valor || 0).toFixed(2)}" step="0.01">
+                    </div>
+                    <div class="col-md-3">
+                        <button class="btn btn-sm btn-danger remove-card-item-btn" 
+                                data-card-id="${card.id}" data-item-index="${idx}">Remover</button>
+                    </div>
                 </div>
-            </div>
-        </div></div>`;
+            </div>`;
+        });
+        html += `<button class="btn btn-sm btn-outline-primary add-card-item-btn mb-3" 
+                        data-card-id="${card.id}">Adicionar Item</button>`;
+    });
 
-    // ---- LISTENERS ----
+    html += `</div></div></div></div>`;
+
+    // Investimento
+    const inv = appData.previsaoAnual.investimento || 0;
+    html += `<div class="row mt-3"><div class="col-12"><div class="category-section card">
+                <div class="card-body">
+                    <h3 class="card-title text-success">Investimento Anual</h3>
+                    <div class="item-row d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-dashed">
+                        <label for="previsao-investimento" class="form-label mb-0">Valor Previsto</label>
+                        <input type="number" id="previsao-investimento"
+                               data-id="investimento"
+                               value="${inv.toFixed(2)}" step="0.01" class="form-control w-auto text-end">
+                    </div>
+                </div>
+            </div></div></div>`;
+
+    // Botões
+    html += `<div class="row mt-3">
+                <div class="col-12">
+                    <button id="save-previsao" class="btn btn-success w-100 mb-2">Salvar Previsão</button>
+                    <button id="edit-categories-btn" class="btn btn-info w-100 mb-2">✏️ Editar Categorias</button>
+                    <button id="clear-previsao" class="btn btn-danger w-100">Limpar Previsão</button>
+                </div>
+            </div>`;
+
+    container.innerHTML = html;
+
+    // Listeners
     container.querySelectorAll('input[type="number"]').forEach(inp => {
         inp.addEventListener('change', e => {
-            const id = e.target.dataset.id || e.target.id.replace('previsao-', '');
+            const id = e.target.dataset.id;
             appData.previsaoAnual[id] = parseFloat(e.target.value) || 0;
             saveData();
         });
     });
-    // botões de adicionar/remover cartões
+
     container.querySelectorAll('.add-card-item-btn').forEach(btn => {
         btn.addEventListener('click', e => {
             const cardId = e.target.dataset.cardId;
             addCardItem(cardId, 'previsao');
         });
     });
+
     container.querySelectorAll('.remove-card-item-btn').forEach(btn => {
         btn.addEventListener('click', e => {
             const cardId = e.target.dataset.cardId;
@@ -230,7 +376,7 @@ function renderPrevisaoAnual() {
             removeCardItem(cardId, idx, 'previsao');
         });
     });
-    // listeners dos campos de cartão (para salvar imediatamente)
+
     container.querySelectorAll('.card-item input').forEach(inp => {
         inp.addEventListener('change', e => {
             const parts = e.target.id.split('-');
@@ -244,9 +390,60 @@ function renderPrevisaoAnual() {
             saveData();
         });
     });
+
+    document.getElementById('save-previsao').addEventListener('click', () => {
+        propagatePrevisaoToMonths();
+        alert('✅ Previsão salva e propagada para todos os meses!');
+    });
+
+    document.getElementById('edit-categories-btn').addEventListener('click', () => {
+        const modal = renderEditCategoriesModal();
+        new bootstrap.Modal(modal).show();
+    });
+
+    document.getElementById('clear-previsao').addEventListener('click', () => {
+        if (confirm('Tem certeza que deseja limpar toda a previsão?')) {
+            CATEGORIES.RECEITAS.forEach(c => appData.previsaoAnual[c.id] = 0);
+            CATEGORIES.DESPESAS.forEach(c => appData.previsaoAnual[c.id] = 0);
+            CATEGORIES.CARTOES.forEach(c => appData.previsaoAnual[c.id] = []);
+            appData.previsaoAnual.investimento = 0;
+            saveData();
+            renderPrevisao();
+        }
+    });
 }
 
-/* ---- RENDERIZA MÊS ---- */
+/* ==================== 6️⃣  CALCULAR SOMATÓRIOS (APENAS CONFIRMADOS) ==================== */
+function calculateYearlyTotal() {
+    let totalDespesas = 0;
+    
+    MONTHS.forEach((_, i) => {
+        const key = `mes_${i}`;
+        const month = appData.meses[key];
+        
+        // Somar apenas despesas confirmadas
+        CATEGORIES.DESPESAS.forEach(cat => {
+            const entry = month.despesas[cat.id];
+            if (entry && entry.confirmado) {
+                totalDespesas += entry.valor;
+            }
+        });
+        
+        // Somar cartões confirmados
+        CATEGORIES.CARTOES.forEach(card => {
+            const items = month.cartoes[card.id] || [];
+            items.forEach(item => {
+                if (item.confirmado) {
+                    totalDespesas += item.valor;
+                }
+            });
+        });
+    });
+    
+    return totalDespesas;
+}
+
+/* ==================== 7️⃣  RENDERIZAR MÊS ==================== */
 function renderMonth(monthIdx) {
     const key = `mes_${monthIdx}`;
     const month = appData.meses[key];
@@ -258,7 +455,6 @@ function renderMonth(monthIdx) {
     const container = document.getElementById('month-content');
     container.innerHTML = '';
 
-    // Se ainda não houver dados reais, preenche com a previsão (sem marcar como confirmado)
     if (!month.isInitialized) {
         CATEGORIES.RECEITAS.forEach(cat => {
             month.receitas[cat.id] = { valor: appData.previsaoAnual[cat.id] || 0, confirmado: false };
@@ -285,425 +481,251 @@ function renderMonth(monthIdx) {
             <div class="item-row d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-dashed">
                 <label for="mes-${key}-${cat.id}" class="form-label mb-0">${cat.name}</label>
                 <input type="number" id="mes-${key}-${cat.id}"
-                       data-category-type="receita"
                        data-id="${cat.id}"
                        value="${entry.valor.toFixed(2)}" step="0.01" class="form-control w-auto text-end">
                 <div class="form-check ms-2">
                     <input type="checkbox" class="form-check-input confirm-checkbox"
                            id="confirm-mes-${key}-${cat.id}"
-                           data-category-type="receita"
                            data-id="${cat.id}"
                            ${entry.confirmado ? 'checked' : ''}>
-                    <label class="form-check-label" for="confirm-mes-${key}-${cat.id}"></label>
+                    <label class="form-check-label" for="confirm-mes-${key}-${cat.id}">PAGO</label>
                 </div>
             </div>`;
     });
-    html += `<div class="total-row d-flex justify-content-between align-items-center mt-3 pt-3 border-top border-2">
-                <span>Total Receitas:</span> <span id="total-receitas-${key}">R$ ${month.totalReceitas.toFixed(2)}</span>
-            </div>`;
     html += `</div></div></div>`;
-    container.innerHTML += html;
 
     /* ---------- DESPESAS ---------- */
-    html = `<div class="col-md-6"><div class="category-section card">
-                <div class="card-body">
-                    <h3 class="card-title text-success">Despesas</h3>`;
+    html += `<div class="col-md-6"><div class="category-section card">
+                    <div class="card-body">
+                        <h3 class="card-title text-danger">Despesas</h3>`;
     CATEGORIES.DESPESAS.forEach(cat => {
         const entry = month.despesas[cat.id];
         html += `
             <div class="item-row d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-dashed">
                 <label for="mes-${key}-${cat.id}" class="form-label mb-0">${cat.name}</label>
                 <input type="number" id="mes-${key}-${cat.id}"
-                       data-category-type="despesa"
                        data-id="${cat.id}"
                        value="${entry.valor.toFixed(2)}" step="0.01" class="form-control w-auto text-end">
                 <div class="form-check ms-2">
                     <input type="checkbox" class="form-check-input confirm-checkbox"
                            id="confirm-mes-${key}-${cat.id}"
-                           data-category-type="despesa"
                            data-id="${cat.id}"
                            ${entry.confirmado ? 'checked' : ''}>
-                    <label class="form-check-label" for="confirm-mes-${key}-${cat.id}"></label>
+                    <label class="form-check-label" for="confirm-mes-${key}-${cat.id}">PAGO</label>
                 </div>
             </div>`;
     });
-    html += `<div class="total-row d-flex justify-content-between align-items-center mt-3 pt-3 border-top border-2">
-                <span>Total Despesas:</span> <span id="total-despesas-${key}">R$ ${month.totalDespesas.toFixed(2)}</span>
-            </div>`;
-    html += `</div></div></div>`;
-    container.innerHTML += html;
+    html += `</div></div></div></div>`;
 
     /* ---------- CARTÕES ---------- */
-    html = `<div class="col-12"><div class="category-section card card-details-section">
+    html += `<div class="row mt-3"><div class="col-12"><div class="category-section card">
                 <div class="card-body">
-                    <h3 class="card-title text-success">Cartões de Crédito</h3>`;
-    CATEGORIES.CARTOES.forEach(card => {
-        html += `<h4 class="text-primary mt-3">${card.name}</h4>`;
-        html += `<div id="mes-${key}-card-${card.id}-items" class="card-items-container mb-3">`;
-        const itens = month.cartoes[card.id] || [];
-        itens.forEach((it, idx) => {
-            html += renderCardItem(it, `mes-${key}-${card.id}-${idx}`, false);
-        });
-        html += `</div>`;
-        html += `<button type="button" class="add-card-item-btn btn btn-primary btn-sm"
-                       data-card-id="${card.id}" data-target="mes"
-                       data-month-key="${key}">Adicionar Item</button>`;
-    });
-    html += `</div></div></div>`;
-    container.innerHTML += html;
+                    <h3 class="card-title text-primary">Cartões de Crédito</h3>`;
 
-    /* ---------- INVESTIMENTO ---------- */
-    const inv = month.investimento;
-    container.innerHTML += `
-        <div class="col-md-6"><div class="category-section card">
-            <div class="card-body">
-                <h3 class="card-title text-success">Investimento</h3>
-                <div class="item-row d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-dashed">
-                    <label for="mes-${key}-investimento" class="form-label mb-0">Valor Real</label>
-                    <input type="number" id="mes-${key}-investimento"
-                           data-category-type="investimento"
-                           value="${inv.valor.toFixed(2)}" step="0.01" class="form-control w-auto text-end">
-                    <div class="form-check ms-2">
-                        <input type="checkbox" class="form-check-input confirm-checkbox"
-                               id="confirm-mes-${key}-investimento"
-                               data-category-type="investimento"
-                               ${inv.confirmado ? 'checked' : ''}>
-                        <label class="form-check-label" for="confirm-mes-${key}-investimento"></label>
+    CATEGORIES.CARTOES.forEach(card => {
+        const items = month.cartoes[card.id] || [];
+        html += `<h5 class="mt-3">${card.name}</h5>`;
+        items.forEach((item, idx) => {
+            html += `
+            <div class="card-item mb-2 p-2 border rounded" style="background: #f9f9f9;">
+                <div class="row g-2 align-items-center">
+                    <div class="col-md-4">
+                        <small>${item.descricao || 'Item'}</small>
+                    </div>
+                    <div class="col-md-2">
+                        <small>${item.parcelas || 'À vista'}</small>
+                    </div>
+                    <div class="col-md-3">
+                        <input type="number" class="form-control form-control-sm" 
+                               id="mes-${key}-${card.id}-${idx}-valor"
+                               value="${(item.valor || 0).toFixed(2)}" step="0.01">
+                    </div>
+                    <div class="col-md-3">
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input confirm-card-checkbox"
+                                   id="confirm-mes-${key}-${card.id}-${idx}"
+                                   data-card-id="${card.id}" data-item-index="${idx}"
+                                   ${item.confirmado ? 'checked' : ''}>
+                            <label class="form-check-label" for="confirm-mes-${key}-${card.id}-${idx}">PAGO</label>
+                        </div>
                     </div>
                 </div>
-            </div>
-        </div></div>`;
+            </div>`;
+        });
+    });
+
+    html += `</div></div></div></div>`;
+
+    /* ---------- INVESTIMENTO ---------- */
+    html += `<div class="row mt-3"><div class="col-md-6"><div class="category-section card">
+                <div class="card-body">
+                    <h3 class="card-title text-success">Investimento</h3>
+                    <div class="item-row d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-dashed">
+                        <label for="mes-${key}-investimento" class="form-label mb-0">Valor Real</label>
+                        <input type="number" id="mes-${key}-investimento"
+                               value="${month.investimento.valor.toFixed(2)}" step="0.01" class="form-control w-auto text-end">
+                        <div class="form-check ms-2">
+                            <input type="checkbox" class="form-check-input confirm-checkbox"
+                                   id="confirm-mes-${key}-investimento"
+                                   data-id="investimento"
+                                   ${month.investimento.confirmado ? 'checked' : ''}>
+                            <label class="form-check-label" for="confirm-mes-${key}-investimento">PAGO</label>
+                        </div>
+                    </div>
+                </div>
+            </div></div></div>`;
 
     /* ---------- RESUMO ---------- */
-    const saldoCls = month.saldoFinal >= 0 ? 'saldo' : 'saldo-negative';
-    container.innerHTML += `
-        <div class="col-md-6"><div class="category-section card">
-            <div class="card-body">
-                <h3 class="card-title text-success">Resumo do Mês</h3>
-                <div class="total-row d-flex justify-content-between align-items-center mt-3 pt-3 border-top border-2">
-                    <span>Saldo (Receitas - Despesas):</span> <span id="saldo-mes-${key}">R$ ${month.saldo.toFixed(2)}</span>
+    const yearlyTotal = calculateYearlyTotal();
+    html += `<div class="row mt-3"><div class="col-md-6"><div class="category-section card">
+                <div class="card-body">
+                    <h3 class="card-title text-warning">Resumo do Mês</h3>
+                    <div class="item-row d-flex justify-content-between mb-2">
+                        <span>Saldo (Receitas - Despesas):</span>
+                        <strong>R$ ${(calculateMonthBalance(monthIdx)).toFixed(2)}</strong>
+                    </div>
+                    <div class="item-row d-flex justify-content-between mb-2">
+                        <span>Saldo Final (Após Investimento):</span>
+                        <strong>R$ ${(calculateMonthBalance(monthIdx) - month.investimento.valor).toFixed(2)}</strong>
+                    </div>
                 </div>
-                <div class="total-row ${saldoCls} d-flex justify-content-between align-items-center pt-2">
-                    <span>Saldo Final (Após Investimento):</span> <span id="saldo-final-mes-${key}">R$ ${month.saldoFinal.toFixed(2)}</span>
+            </div></div>
+            <div class="col-md-6"><div class="category-section card">
+                <div class="card-body">
+                    <h3 class="card-title text-info">Total Anual (Confirmados)</h3>
+                    <div class="item-row d-flex justify-content-between mb-2">
+                        <span>Total de Despesas do Ano:</span>
+                        <strong style="font-size: 1.3em; color: #dc3545;">R$ ${yearlyTotal.toFixed(2)}</strong>
+                    </div>
                 </div>
-            </div>
-        </div></div>`;
+            </div></div></div>`;
 
-    /* ---------- LISTENERS ---------- */
-    // inputs numéricos - FIX: usar getAttribute em vez de dataset.category-type
+    /* ---------- BOTÃO SALVAR ---------- */
+    html += `<div class="row mt-3">
+                <div class="col-12">
+                    <button id="save-month" class="btn btn-success w-100">Salvar Dados do Mês</button>
+                </div>
+            </div>`;
+
+    container.innerHTML = html;
+
+    // Listeners
     container.querySelectorAll('input[type="number"]').forEach(inp => {
         inp.addEventListener('change', e => {
-            const type = e.target.getAttribute('data-category-type');
-            const id = e.target.dataset.id || e.target.id.replace(`mes-${key}-`, '');
-            const val = parseFloat(e.target.value) || 0;
-
-            if (type === 'receita') month.receitas[id].valor = val;
-            else if (type === 'despesa') month.despesas[id].valor = val;
-            else if (type === 'investimento') month.investimento.valor = val;
-
-            month.isInitialized = true; // marca que o usuário editou algo
-            calculateMonthTotals(key);
-            updateMonthTotalsDisplay(key);
-            saveData();
+            const id = e.target.id;
+            if (id.includes('investimento')) {
+                month.investimento.valor = parseFloat(e.target.value) || 0;
+            } else {
+                const parts = id.split('-');
+                const catId = parts[2];
+                if (id.includes('confirm')) return;
+                
+                if (parts.length === 4) {
+                    month.receitas[catId].valor = parseFloat(e.target.value) || 0;
+                } else if (parts.length === 5) {
+                    const cardId = parts[2];
+                    const idx = parseInt(parts[3]);
+                    month.cartoes[cardId][idx].valor = parseFloat(e.target.value) || 0;
+                }
+            }
         });
     });
 
-    // checkboxes de confirmação - FIX: usar getAttribute em vez de dataset.category-type
-    container.querySelectorAll('.confirm-checkbox').forEach(cb => {
-        cb.addEventListener('change', e => {
-            const type = e.target.getAttribute('data-category-type');
-            const id = e.target.dataset.id;
-            if (type === 'receita') month.receitas[id].confirmado = e.target.checked;
-            else if (type === 'despesa') month.despesas[id].confirmado = e.target.checked;
-            else if (type === 'investimento') month.investimento.confirmado = e.target.checked;
-            saveData();
+    container.querySelectorAll('.confirm-checkbox').forEach(chk => {
+        chk.addEventListener('change', e => {
+            const id = e.target.id;
+            const catId = e.target.dataset.id;
+            
+            if (catId === 'investimento') {
+                month.investimento.confirmado = e.target.checked;
+            } else if (id.includes('receita')) {
+                month.receitas[catId].confirmado = e.target.checked;
+            } else {
+                month.despesas[catId].confirmado = e.target.checked;
+            }
         });
     });
 
-    // botões de adicionar/remover cartões
-    container.querySelectorAll('.add-card-item-btn').forEach(btn => {
-        btn.addEventListener('click', e => {
-            const cardId = e.target.dataset.cardId;
-            const monthKey = e.target.dataset.monthKey;
-            addCardItem(cardId, 'mes', monthKey);
-        });
-    });
-    container.querySelectorAll('.remove-card-item-btn').forEach(btn => {
-        btn.addEventListener('click', e => {
+    container.querySelectorAll('.confirm-card-checkbox').forEach(chk => {
+        chk.addEventListener('change', e => {
             const cardId = e.target.dataset.cardId;
             const idx = parseInt(e.target.dataset.itemIndex);
-            const monthKey = e.target.dataset.monthKey;
-            removeCardItem(cardId, idx, 'mes', monthKey);
+            month.cartoes[cardId][idx].confirmado = e.target.checked;
         });
     });
 
-    // inputs dos cartões (mensal/falta/etc.)
-    container.querySelectorAll('.card-item input').forEach(inp => {
-        inp.addEventListener('change', e => {
-            const parts = e.target.id.split('-');
-            const cardId = parts[3];
-            const idx = parseInt(parts[4]);
-            const field = parts[5];
-            const item = month.cartoes[cardId][idx];
-            if (field === 'descricao') item.descricao = e.target.value;
-            else if (field === 'parcelas') item.parcelas = e.target.value;
-            else item[field] = parseFloat(e.target.value) || 0;
-            month.isInitialized = true;
-            calculateMonthTotals(key);
-            updateMonthTotalsDisplay(key);
-            saveData();
-        });
+    document.getElementById('save-month').addEventListener('click', () => {
+        month.isInitialized = true;
+        saveData();
+        alert('✅ Dados do mês salvos com sucesso!');
     });
-
-    calculateMonthTotals(key);
-    updateMonthTotalsDisplay(key);
 }
 
-/* ---- CARD ITEM TEMPLATE ---- */
-function renderCardItem(item, baseId, isPrevisao) {
-    const removeBtn = isPrevisao ?
-        `<button type="button" class="remove-card-item-btn btn btn-danger btn-sm"
-                data-card-id="${baseId.split('-')[1]}"
-                data-item-index="${baseId.split('-')[2]}"
-                data-target="previsao">X</button>` :
-        `<button type="button" class="remove-card-item-btn btn btn-danger btn-sm"
-                data-card-id="${baseId.split('-')[2]}"
-                data-item-index="${baseId.split('-')[3]}"
-                data-target="mes"
-                data-month-key="${baseId.split('-')[1]}">X</button>`;
+function calculateMonthBalance(monthIdx) {
+    const key = `mes_${monthIdx}`;
+    const month = appData.meses[key];
+    let totalReceitas = 0;
+    let totalDespesas = 0;
 
-    const confirmCheckbox = isPrevisao ? '' : `
-        <div class="form-check ms-2">
-            <input type="checkbox" class="form-check-input confirm-checkbox"
-                   id="confirm-${baseId}"
-                   data-card-id="${baseId.split('-')[2]}"
-                   data-item-index="${baseId.split('-')[3]}"
-                   ${item.confirmado ? 'checked' : ''}>
-            <label class="form-check-label" for="confirm-${baseId}"></label>
-        </div>`;
-
-    return `
-        <div class="card-item d-grid gap-2 align-items-center p-3 mb-2 bg-light rounded shadow-sm" id="card-item-${baseId}">
-            <input type="text" id="${baseId}-descricao" class="form-control card-description"
-                   value="${item.descricao || ''}" placeholder="Descrição">
-            <input type="text" id="${baseId}-parcelas" class="form-control card-parcelas text-center"
-                   value="${item.parcelas || ''}" placeholder="Parcelas">
-            <input type="number" id="${baseId}-mensal" class="form-control card-mensal text-end"
-                   value="${(item.mensal || 0).toFixed(2)}" step="0.01" placeholder="Mensal">
-            <input type="number" id="${baseId}-falta" class="form-control card-falta text-end"
-                   value="${(item.falta || 0).toFixed(2)}" step="0.01" placeholder="Falta">
-            ${confirmCheckbox}
-            ${removeBtn}
-        </div>`;
-}
-
-/* ---- ADICIONAR / REMOVER ITEM DE CARTÃO ---- */
-function addCardItem(cardId, target, monthKey = null) {
-    const newItem = { descricao: '', parcelas: '', mensal: 0, falta: 0, confirmado: false };
-    let arr, parentId;
-
-    if (target === 'previsao') {
-        if (!appData.previsaoAnual[cardId]) appData.previsaoAnual[cardId] = [];
-        arr = appData.previsaoAnual[cardId];
-        parentId = `previsao-card-${cardId}-items`;
-    } else {
-        if (!appData.meses[monthKey].cartoes[cardId]) appData.meses[monthKey].cartoes[cardId] = [];
-        arr = appData.meses[monthKey].cartoes[cardId];
-        parentId = `mes-${monthKey}-card-${cardId}-items`;
-    }
-
-    arr.push(newItem);
-    const idx = arr.length - 1;
-    const baseId = target === 'previsao' ? `previsao-${cardId}-${idx}` : `mes-${monthKey}-${cardId}-${idx}`;
-
-    const parent = document.getElementById(parentId);
-    const temp = document.createElement('div');
-    temp.innerHTML = renderCardItem(newItem, baseId, target === 'previsao');
-    const elem = temp.firstElementChild;
-    parent.appendChild(elem);
-
-    // listeners dos novos inputs
-    elem.querySelectorAll('input').forEach(inp => {
-        inp.addEventListener('change', e => {
-            const parts = e.target.id.split('-');
-            const cId = parts[target === 'previsao' ? 1 : 2];
-            const iIdx = parseInt(parts[target === 'previsao' ? 2 : 3]);
-            const field = parts[target === 'previsao' ? 3 : 4];
-            const targetArr = target === 'previsao' ? appData.previsaoAnual[cId] : appData.meses[monthKey].cartoes[cId];
-            const it = targetArr[iIdx];
-            if (field === 'descricao') it.descricao = e.target.value;
-            else if (field === 'parcelas') it.parcelas = e.target.value;
-            else it[field] = parseFloat(e.target.value) || 0;
-            if (target === 'mes') {
-                appData.meses[monthKey].isInitialized = true;
-                calculateMonthTotals(monthKey);
-                updateMonthTotalsDisplay(monthKey);
-            }
-            saveData();
-        });
-    });
-
-    // listener do botão remover
-    elem.querySelector('.remove-card-item-btn').addEventListener('click', e => {
-        const cId = e.target.dataset.cardId;
-        const iIdx = parseInt(e.target.dataset.itemIndex);
-        const tgt = e.target.dataset.target;
-        const mKey = e.target.dataset.monthKey;
-        removeCardItem(cId, iIdx, tgt, mKey);
-    });
-
-    // listener do checkbox de confirmação (se existir)
-    const confirmCb = elem.querySelector('.confirm-checkbox');
-    if (confirmCb) {
-        confirmCb.addEventListener('change', e => {
-            const cId = e.target.dataset.cardId;
-            const iIdx = parseInt(e.target.dataset.itemIndex);
-            const it = appData.meses[monthKey].cartoes[cId][iIdx];
-            it.confirmado = e.target.checked;
-            saveData();
-        });
-    }
-
-    saveData();
-}
-
-function removeCardItem(cardId, idx, target, monthKey = null) {
-    let arr, parentId;
-    if (target === 'previsao') {
-        arr = appData.previsaoAnual[cardId];
-        parentId = `previsao-card-${cardId}-items`;
-    } else {
-        arr = appData.meses[monthKey].cartoes[cardId];
-        parentId = `mes-${monthKey}-card-${cardId}-items`;
-    }
-
-    if (arr && arr.length > idx) {
-        arr.splice(idx, 1);
-        // Re-renderiza a lista inteira para garantir índices corretos
-        if (target === 'previsao') {
-            renderPrevisaoAnual();
-            showPage('previsao-anual');
-        } else {
-            renderMonth(parseInt(monthKey.replace('mes_', '')));
-            showPage('acompanhamento-mensal');
+    CATEGORIES.RECEITAS.forEach(cat => {
+        if (month.receitas[cat.id]) {
+            totalReceitas += month.receitas[cat.id].valor;
         }
-    }
-    saveData();
-}
-
-/* ---- CÁLCULOS ---- */
-function calculateMonthTotals(monthKey) {
-    const m = appData.meses[monthKey];
-    let totalRec = 0, totalDesp = 0;
-
-    CATEGORIES.RECEITAS.forEach(cat => totalRec += m.receitas[cat.id].valor);
-    CATEGORIES.DESPESAS.forEach(cat => totalDesp += m.despesas[cat.id].valor);
-    CATEGORIES.CARTOES.forEach(card => {
-        (m.cartoes[card.id] || []).forEach(it => totalDesp += it.mensal || 0);
     });
 
-    m.totalReceitas = totalRec;
-    m.totalDespesas = totalDesp;
-    m.saldo = totalRec - totalDesp;
-    m.saldoFinal = m.saldo - (m.investimento.valor || 0);
-}
-function updateMonthTotalsDisplay(monthKey) {
-    const m = appData.meses[monthKey];
-    const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
-    set(`total-receitas-${monthKey}`, `R$ ${m.totalReceitas.toFixed(2)}`);
-    set(`total-despesas-${monthKey}`, `R$ ${m.totalDespesas.toFixed(2)}`);
-    set(`saldo-mes-${monthKey}`, `R$ ${m.saldo.toFixed(2)}`);
-    const saldoFinalEl = document.getElementById(`saldo-final-mes-${monthKey}`);
-    if (saldoFinalEl) {
-        saldoFinalEl.textContent = `R$ ${m.saldoFinal.toFixed(2)}`;
-        saldoFinalEl.parentElement.classList.remove('saldo', 'saldo-negative');
-        saldoFinalEl.parentElement.classList.add(m.saldoFinal >= 0 ? 'saldo' : 'saldo-negative');
-    }
-}
+    CATEGORIES.DESPESAS.forEach(cat => {
+        if (month.despesas[cat.id]) {
+            totalDespesas += month.despesas[cat.id].valor;
+        }
+    });
 
-/* ---- NAVEGAÇÃO ---- */
-let currentPage = 'previsao-anual';
-function showPage(pageId) {
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    document.getElementById(pageId).classList.add('active');
-
-    document.querySelectorAll('.nav-button').forEach(b => b.classList.remove('active'));
-    if (pageId === 'previsao-anual') {
-        document.getElementById('btn-previsao').classList.add('active');
-        renderPrevisaoAnual();
-    }
-}
-function handleMonthNavClick(e) {
-    const idx = parseInt(e.target.dataset.month);
-    if (!isNaN(idx)) {
-        showPage('acompanhamento-mensal');
-        document.querySelectorAll('.month-nav .btn').forEach(b => b.classList.remove('active', 'btn-success'));
-        e.target.classList.add('active', 'btn-success'); // Ativa o botão do mês com estilo Bootstrap
-        renderMonth(idx);
-
-        // Scroll suave para o topo da página
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-}
-
-/* ---- LIMPAR PREVISÃO ---- */
-function clearPrevisao() {
-    if (!confirm('Tem certeza que deseja limpar TODA a previsão anual? Isso também zerará os meses que ainda não foram confirmados.')) {
-        return; // Cancela se o usuário não confirmar
-    }
-
-    CATEGORIES.RECEITAS.forEach(c => appData.previsaoAnual[c.id] = 0);
-    CATEGORIES.DESPESAS.forEach(c => appData.previsaoAnual[c.id] = 0);
-    CATEGORIES.CARTOES.forEach(c => appData.previsaoAnual[c.id] = []);
-    appData.previsaoAnual.investimento = 0;
-
-    propagatePrevisaoToMonths(); // zera os meses não confirmados
-    renderPrevisaoAnual();
-    saveData();
-    alert('Previsão anual limpa e meses não confirmados foram zerados.');
-}
-
-/* ---- SERVICE WORKER ------------------- */
-function registerServiceWorker() {
-    if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./service-worker.js')
-                .then(r => console.log('Service Worker registrado com sucesso:', r))
-                .catch(err => console.error('Falha ao registrar o Service Worker:', err));
+    CATEGORIES.CARTOES.forEach(card => {
+        const items = month.cartoes[card.id] || [];
+        items.forEach(item => {
+            totalDespesas += item.valor;
         });
-    }
+    });
+
+    return totalReceitas - totalDespesas;
 }
 
-/* ==== INICIALIZAÇÃO ==== */
+function addCardItem(cardId, type) {
+    const newItem = { descricao: '', parcelas: '', valor: 0, confirmado: false };
+    if (type === 'previsao') {
+        appData.previsaoAnual[cardId].push(newItem);
+    }
+    saveData();
+    renderPrevisao();
+}
+
+function removeCardItem(cardId, idx, type) {
+    if (type === 'previsao') {
+        appData.previsaoAnual[cardId].splice(idx, 1);
+    }
+    saveData();
+    renderPrevisao();
+}
+
+/* ==================== 8️⃣  INICIALIZAR ==================== */
 document.addEventListener('DOMContentLoaded', () => {
     loadData();
-    propagatePrevisaoToMonths(); // garante que a previsão esteja nos meses ainda não confirmados
-    renderPrevisaoAnual();
-    showPage('previsao-anual');
-
-    // navegação
-    document.getElementById('btn-previsao').addEventListener('click', () => showPage('previsao-anual'));
-    document.querySelectorAll('.month-nav .btn').forEach(b => b.addEventListener('click', handleMonthNavClick));
-
-    // botões de salvar
-    document.getElementById('save-previsao').addEventListener('click', () => {
-        saveData();
-        propagatePrevisaoToMonths();
-        alert('Previsão salva e propagada para os meses não confirmados.');
+    
+    document.getElementById('btn-previsao').addEventListener('click', () => {
+        document.getElementById('previsao-content').style.display = 'block';
+        document.getElementById('month-content').style.display = 'none';
+        renderPrevisao();
     });
-    document.getElementById('save-month-data').addEventListener('click', () => {
-        if (currentActiveMonthIndex !== null) {
-            const key = `mes_${currentActiveMonthIndex}`;
-            appData.meses[key].isInitialized = true; // Marca o mês como totalmente inicializado/confirmado
-            calculateMonthTotals(key);
-            updateMonthTotalsDisplay(key);
+
+    MONTHS.forEach((month, idx) => {
+        const btn = document.querySelector(`button:nth-of-type(${idx + 2})`);
+        if (btn) {
+            btn.addEventListener('click', () => {
+                document.getElementById('previsao-content').style.display = 'none';
+                document.getElementById('month-content').style.display = 'block';
+                renderMonth(idx);
+            });
         }
-        saveData();
-        alert('Dados do mês salvos.');
     });
 
-    // botão limpar previsão
-    document.getElementById('clear-previsao').addEventListener('click', clearPrevisao);
-
-    registerServiceWorker();
+    renderPrevisao();
 });
