@@ -874,8 +874,7 @@ function removeCardItem(cardId, idx, type) {
 
 /* ==================== 🔟  INICIALIZAR ==================== */
 document.addEventListener('DOMContentLoaded', () => {
-    // Tentar carregar do Firebase, se não estiver autenticado, usar localStorage
-    setupAuthListeners();
+    // Carregar dados do localStorage
     
     document.getElementById('btn-previsao')?.addEventListener('click', () => {
         document.getElementById('previsao-content').style.display = 'block';
