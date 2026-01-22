@@ -47,8 +47,4 @@
   force = true
 
 # SPA fallback (caso precise no futuro)
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
-  conditions = {Role = ["admin"]}
+
